@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="260" viewBox="0 0 640 260" role="img" aria-label="rich-blocks logo: a pixel crab beside the name and three status pills">
+  <rect x="0" y="0" width="640" height="260" rx="20" fill="#1f1e1d"/>
+
+  <!-- Pixel crab, Clawd-style: 14 x 9 cells of 14px -->
+  <g transform="translate(40 67) scale(14)" shape-rendering="crispEdges" fill="#d97757">
+    <rect x="3" y="0" width="8" height="2"/>
+    <rect x="3" y="2" width="1" height="2"/>
+    <rect x="5" y="2" width="4" height="2"/>
+    <rect x="10" y="2" width="1" height="2"/>
+    <rect x="1" y="3" width="2" height="2"/>
+    <rect x="11" y="3" width="2" height="2"/>
+    <rect x="3" y="4" width="8" height="3"/>
+    <rect x="3" y="7" width="1" height="2"/>
+    <rect x="5" y="7" width="1" height="2"/>
+    <rect x="8" y="7" width="1" height="2"/>
+    <rect x="10" y="7" width="1" height="2"/>
+    <rect x="4" y="2" width="1" height="2" fill="#1f1e1d"/>
+    <rect x="9" y="2" width="1" height="2" fill="#1f1e1d"/>
+  </g>
+
+  <text x="270" y="118" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="50" font-weight="700" fill="#faf9f5">rich-blocks</text>
+  <text x="272" y="152" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="18" fill="#a1a1aa">Interactive blocks for Claude Code</text>
+
+  <g font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#ffffff" text-anchor="middle">
+    <rect x="272" y="174" width="58" height="24" rx="5" fill="#22c55e"/>
+    <text x="301" y="191">Done</text>
+    <rect x="338" y="174" width="66" height="24" rx="5" fill="#ef4444"/>
+    <text x="371" y="191">Failed</text>
+    <rect x="412" y="174" width="52" height="24" rx="5" fill="#eab308"/>
+    <text x="438" y="191">Skip</text>
+  </g>
+</svg>
