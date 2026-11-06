@@ -17,7 +17,7 @@ A Claude Code mod that makes Claude's answers easier to act on.
 
 Collapsed to one line above the prompt until you click **show**:
 
-![The suggestion line above the prompt, next to another mod's band](docs/suggestion-line.png)
+![The collapsed suggestion line above the prompt](docs/suggestion-line.png)
 
 ### Compaction
 
