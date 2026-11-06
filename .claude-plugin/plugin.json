@@ -1,0 +1,17 @@
+{
+  "name": "rich-blocks",
+  "version": "0.5.1",
+  "description": "Interactive blocks in the chat: copy boxes, checklists you tick off, colored callouts in replies, a concise response style, and completed steps kept through compaction.",
+  "author": { "name": "Elusyon117", "url": "https://github.com/Elusyon117" },
+  "repository": "https://github.com/Elusyon117/Elusyon-rich-blocks",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "responseStyle": {
+      "type": "string",
+      "title": "Response style",
+      "description": "concise: Claude answers short and on topic, ends with Next steps when work continues, and gives your own steps as a checklist. off: only the block and callout guidance. Takes effect in the next new conversation.",
+      "options": ["concise", "off"],
+      "default": "concise"
+    }
+  }
+}

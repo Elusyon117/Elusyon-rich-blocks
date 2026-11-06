@@ -1,0 +1,26 @@
+export type StepStatus = 'todo' | 'done' | 'failed' | 'skipped'
+
+/** One checklist Claude showed, keyed by its tool_use_id. */
+export type Checklist = {
+  title: string
+  steps: string[]
+  status: StepStatus[]
+  /** Why a step failed, as the person typed it; '' for none. */
+  notes: string[]
+  /** The status text last sent to Claude, so only changes are reported. */
+  reported: string
+  /** The session that showed it; only its own checklists count at compaction. */
+  session?: string
+}
+
+declare module 'claude-code' {
+  interface PluginState {
+    'rich-blocks': {
+      checklists: Shaped<Record<string, Checklist>>
+      /** Whether the suggestion above the prompt is opened. */
+      suggestOpen: boolean
+      /** The suggestion last sent or dismissed; the band hides while it matches. */
+      suggestSeen: string
+    }
+  }
+}

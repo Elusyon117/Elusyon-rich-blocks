@@ -1,0 +1,5 @@
+{
+  "name": "elusyon-rich-blocks",
+  "owner": { "name": "Elusyon117" },
+  "plugins": [{ "name": "rich-blocks", "source": "./" }]
+}
