@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/logo.svg" alt="rich-blocks" width="560"></p>
+<p align="center"><img src="docs/logo.gif" alt="rich-blocks: a pixel crab stacks green, red and yellow blocks, and the stack falls over" width="600"></p>
 
 # rich-blocks
 
