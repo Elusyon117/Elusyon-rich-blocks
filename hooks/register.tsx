@@ -5,33 +5,48 @@ import type { Checklist, StepStatus } from '../types'
 
 import { drawCallouts, hasCallouts } from './callouts'
 import { sectionText } from './instructions'
+import { CHECKLISTS_PANE, HIGHLIGHTS_PANE, collectHighlights, drawChecklists, drawHighlights } from './panels'
 
-// rich-blocks: interactive blocks Claude draws in the chat.
-//   copy_box  - a color-coded box with a Copy button
+// The mod's session values. The loader traces each $.state reference to an
+// atom written in the same file, so every file that reads a value defines its
+// own atom of it (same plugin and key: the same value). Change a `shape` tag
+// when that value's fields change: older stored values then read as initial.
+const checklists = atom({ plugin: 'rich-blocks', key: 'checklists' } as const, {}, { shape: 'checklists-2' })
+const suggestOpen = atom({ plugin: 'rich-blocks', key: 'suggestOpen' } as const, false)
+const suggestSeen = atom({ plugin: 'rich-blocks', key: 'suggestSeen' } as const, '')
+const copyTabs = atom({ plugin: 'rich-blocks', key: 'copyTabs' } as const, {})
+const choices = atom({ plugin: 'rich-blocks', key: 'choices' } as const, {})
+
+// rich-blocks 0.6: interactive blocks Claude draws in the chat.
+//   copy_box  - a color-coded box with a Copy button, optionally with OS tabs
 //   checklist - steps the person ticks off: Done / Failed / Skip
+//   choice    - 2-4 options the person picks from; the pick is sent as a message
 //
 // The desktop app folds runs of tool calls into one "Used ... N times" line
 // and does not unfold it on request, so the blocks are drawn by the ToolGroup
 // hook, under that line. A call drawn as its own row gets one via ToolUse.
+//
+// Token budget: tool descriptions and the guide ride on every request, so
+// they are short; progress reaches Claude as one compact line per checklist;
+// tool results are a few words; panes and the band never reach the context.
 
 const PLUGIN = 'rich-blocks'
 const COPY_TOOL = `mcp__${PLUGIN}__copy_box`
 const CHECK_TOOL = `mcp__${PLUGIN}__checklist`
-
-// Change the tag when Checklist's fields change: older stored values then read as {}.
-const checklists = atom({ plugin: 'rich-blocks', key: 'checklists' } as const, {}, { shape: 'checklists-2' })
-const suggestOpen = atom({ plugin: 'rich-blocks', key: 'suggestOpen' } as const, false)
-const suggestSeen = atom({ plugin: 'rich-blocks', key: 'suggestSeen' } as const, '')
+const CHOICE_TOOL = `mcp__${PLUGIN}__choice`
+const OUR_TOOLS = new Set([COPY_TOOL, CHECK_TOOL, CHOICE_TOOL])
 
 type Tone = 'info' | 'warning' | 'success' | 'danger'
-type CopyBoxInput = { text: string; title?: string; language?: string; tone: Tone }
+type Tab = { label: string; text: string; language?: string }
+type CopyBoxInput = { tabs: Tab[]; title?: string; tone: Tone }
 type ChecklistInput = { title: string; steps: string[] }
+type ChoiceInput = { question: string; options: { label: string; detail?: string }[] }
 
-const TONES: Record<Tone, { color: string; icon: string }> = {
-  info: { color: '#3b82f6', icon: 'ℹ' },
-  warning: { color: '#f59e0b', icon: '⚠' },
-  success: { color: '#22c55e', icon: '✓' },
-  danger: { color: '#ef4444', icon: '✖' },
+const TONES: Record<Tone, string> = {
+  info: '#3b82f6',
+  warning: '#f59e0b',
+  success: '#22c55e',
+  danger: '#ef4444',
 }
 
 const STEP_LOOK: Record<StepStatus, { glyph: string; color: string }> = {
@@ -41,15 +56,23 @@ const STEP_LOOK: Record<StepStatus, { glyph: string; color: string }> = {
   skipped: { glyph: '–', color: '#eab308' },
 }
 
+const str = (v: unknown) => (typeof v === 'string' && v.trim() !== '' ? v : undefined)
+
 function readCopyBox(input: unknown): CopyBoxInput | undefined {
   if (typeof input !== 'object' || input === null) return undefined
   const raw = input as Record<string, unknown>
-  if (typeof raw.text !== 'string') return undefined
+  const tabs: Tab[] = Array.isArray(raw.tabs)
+    ? raw.tabs
+        .map(t => (typeof t === 'object' && t !== null ? (t as Record<string, unknown>) : {}))
+        .filter(t => str(t.text) && str(t.label))
+        .map(t => ({ label: t.label as string, text: t.text as string, language: str(t.language) }))
+    : []
+  if (tabs.length === 0 && str(raw.text)) tabs.push({ label: '', text: raw.text as string, language: str(raw.language) })
+  if (tabs.length === 0) return undefined
   const tone = raw.tone
   return {
-    text: raw.text,
-    title: typeof raw.title === 'string' ? raw.title : undefined,
-    language: typeof raw.language === 'string' ? raw.language : undefined,
+    tabs,
+    title: str(raw.title),
     tone: tone === 'warning' || tone === 'success' || tone === 'danger' ? tone : 'info',
   }
 }
@@ -60,16 +83,32 @@ function readChecklist(input: unknown): ChecklistInput | undefined {
   if (!Array.isArray(raw.steps)) return undefined
   const steps = raw.steps.filter((s): s is string => typeof s === 'string' && s.trim() !== '')
   if (steps.length === 0) return undefined
-  return { title: typeof raw.title === 'string' ? raw.title : 'Steps', steps }
+  return { title: str(raw.title) ?? 'Steps', steps }
 }
 
+function readChoice(input: unknown): ChoiceInput | undefined {
+  if (typeof input !== 'object' || input === null) return undefined
+  const raw = input as Record<string, unknown>
+  if (!Array.isArray(raw.options)) return undefined
+  const options = raw.options
+    .map(o => (typeof o === 'string' ? { label: o } : typeof o === 'object' && o !== null ? (o as Record<string, unknown>) : {}))
+    .filter(o => str(o.label))
+    .map(o => ({ label: o.label as string, detail: str(o.detail) }))
+  if (options.length < 2) return undefined
+  return { question: str(raw.question) ?? 'Pick one', options: options.slice(0, 6) }
+}
+
+// The progress line Claude reads: step numbers and marks only (the step texts
+// are already in the context, in the checklist's own call), reasons kept.
+const MARK: Record<StepStatus, string> = { done: '✓', failed: '✗', skipped: '–', todo: '○' }
+
 function summary(list: Checklist): string {
-  const lines = list.steps.map((step, i) => {
-    const hasReason = list.status[i] === 'failed' || list.status[i] === 'skipped'
-    const note = hasReason && list.notes[i]?.trim() ? ` (reason: ${list.notes[i].trim()})` : ''
-    return `${i + 1}. [${list.status[i] ?? 'todo'}] ${step}${note}`
+  const marks = list.steps.map((_, i) => {
+    const s = list.status[i] ?? 'todo'
+    const note = (s === 'failed' || s === 'skipped') && list.notes[i]?.trim() ? `(${list.notes[i].trim()})` : ''
+    return `${i + 1}${MARK[s]}${note}`
   })
-  return `Checklist "${list.title}":\n${lines.join('\n')}`
+  return `"${list.title}": ${marks.join(' ')}`
 }
 
 function emptyList(input: ChecklistInput): Checklist {
@@ -83,27 +122,24 @@ function emptyList(input: ChecklistInput): Checklist {
 }
 
 // The steps the person marked Done in this session's checklists: what
-// compaction keeps. Checklists loaded from other sessions never count.
+// compaction keeps. These carry the step text: after compaction the
+// checklist's own call is gone. Checklists from other sessions never count.
 function completedSteps(lists: Record<string, Checklist>, session: string): string {
-  const parts = Object.values(lists)
+  return Object.values(lists)
     .filter(list => list.session === session)
     .map(list => ({ list, done: list.steps.filter((_, i) => list.status[i] === 'done') }))
     .filter(({ done }) => done.length > 0)
-    .map(({ list, done }) => `- ${list.title}:\n${done.map(step => `  - ✓ ${step}`).join('\n')}`)
-  return parts.join('\n')
+    .map(({ list, done }) => `- ${list.title}: ${done.map(step => `✓ ${step}`).join('; ')}`)
+    .join('\n')
 }
 
-const KEEP_NOTE = (done: string) =>
-  'Steps the user completed and confirmed (kept by rich-blocks across compaction):\n' + done
+const KEEP_NOTE = (done: string) => 'Steps the user completed and confirmed (kept by rich-blocks across compaction):\n' + done
 
 const COMPACT_GUIDE = (done: string) =>
-  'rich-blocks: keep the completed steps below exactly as listed; they were carried out and confirmed. ' +
-  'Keep decisions and current state the task still depends on. Drop what is spent: failed or abandoned ' +
-  'attempts that were later fixed, test runs and their output, checklist and UI chatter, and superseded ' +
-  'versions of files or plans.\n\n' + KEEP_NOTE(done)
+  'rich-blocks: keep the completed steps below exactly; they were carried out and confirmed. Keep decisions ' +
+  'and state the task still depends on. Drop what is spent: failed attempts later fixed, test runs and their ' +
+  'output, checklist and UI chatter, superseded versions of files or plans.\n\n' + KEEP_NOTE(done)
 
-// After compaction or a /clear handoff, mark every checklist as reported and
-// its suggestion as seen, so nothing old is sent or shown again.
 // Checklist marks outlive the session: every change is mirrored to $.store
 // (the newest 100 checklists), and a session starts by loading them back, so
 // a resumed conversation shows its checklists as they were left.
@@ -112,8 +148,7 @@ const KEEP = 100
 
 async function saveLists($: any) {
   const lists = await read($, checklists)
-  const kept = Object.fromEntries(Object.entries(lists).slice(-KEEP))
-  await $.store.set(STORE_KEY, kept)
+  await $.store.set(STORE_KEY, Object.fromEntries(Object.entries(lists).slice(-KEEP)))
 }
 
 async function loadLists($: any) {
@@ -122,18 +157,19 @@ async function loadLists($: any) {
   // The session's own values win over stored ones of the same checklist.
   await update($, checklists, (lists: Record<string, Checklist>) => ({ ...stored, ...lists }))
   // An old checklist's suggestion is not news: keep it out of a fresh session's band.
-  const merged = await read($, checklists)
-  const current = await read($, suggestSeen)
-  if (current === '') await update($, suggestSeen, () => suggestion(merged))
+  if ((await read($, suggestSeen)) === '') {
+    const merged = await read($, checklists)
+    await update($, suggestSeen, () => suggestion(merged))
+  }
 }
 
+// After compaction or a /clear handoff, mark every checklist as reported and
+// its suggestion as seen, so nothing old is sent or shown again.
 async function settleChecklists($: any) {
   const lists = await read($, checklists)
-  await update($, checklists, (all: Record<string, Checklist>) => {
-    const copy: Record<string, Checklist> = {}
-    for (const [id, list] of Object.entries(all)) copy[id] = { ...list, reported: summary(list) }
-    return copy
-  })
+  await update($, checklists, (all: Record<string, Checklist>) =>
+    Object.fromEntries(Object.entries(all).map(([id, list]) => [id, { ...list, reported: summary(list) }])),
+  )
   await update($, suggestSeen, () => suggestion(lists))
   await update($, suggestOpen, () => false)
   await saveLists($)
@@ -197,52 +233,108 @@ type Els = { Box: any; Text: any; Button: any; Code: any }
 
 // One compact copy box. A short one-line text sits on one row with its title
 // and the Copy button; anything longer gets a slim header row above the code.
-function drawCopyBox($: any, els: Els, key: string, box: CopyBoxInput) {
+// With tabs (one per OS or shell), the header holds the tab buttons and the
+// box shows the picked tab; Copy copies that tab's text.
+async function drawCopyBox($: any, els: Els, key: string, box: CopyBoxInput) {
   const { Box, Text, Button, Code } = els
-  const tone = TONES[box.tone]
-  const isShort = !box.text.includes('\n') && box.text.length <= 60
+  const color = TONES[box.tone]
+  const picked = Math.min((await read($, copyTabs))[key] ?? 0, box.tabs.length - 1)
+  const tab = box.tabs[picked]
+  const hasTabs = box.tabs.length > 1
+  const isShort = !hasTabs && !tab.text.includes('\n') && tab.text.length <= 60
   const copy = (
     <Button
       key={`copy-${key}`}
       onPress={async (press: any) => {
-        const copied = await $.ui.copy({ text: box.text, surface: press.surface })
+        const copied = await $.ui.copy({ text: tab.text, surface: press.surface })
         $.ui.toast(copied.isCopied ? 'Copied ✓' : `Could not copy (${copied.reason})`)
       }}
     >
       Copy
     </Button>
   )
-  const title = (
-    <Text color={tone.color} bold>
+  const title = box.title || !hasTabs ? (
+    <Text color={color} bold>
       {box.title ?? 'Copy'}
     </Text>
-  )
+  ) : null
+  const tabs = hasTabs ? (
+    <Box flexDirection="row" columnGap={1}>
+      {box.tabs.map((t, n) => (
+        <Button
+          key={`tab-${key}-${n}`}
+          plain
+          dimColor={n !== picked}
+          label={n === picked ? `▸ ${t.label}` : t.label}
+          onPress={() => update($, copyTabs, (all: Record<string, number>) => ({ ...all, [key]: n }))}
+        />
+      ))}
+    </Box>
+  ) : null
 
   if (isShort) {
     return (
-      <Box key={key} flexDirection="row" alignItems="center" gap="sm" borderStyle="round" borderColor={tone.color} paddingX={1}>
+      <Box key={key} flexDirection="row" alignItems="center" gap="sm" borderStyle="round" borderColor={color} paddingX={1}>
         {title}
         <Box flexGrow={1}>
-          <Code source={box.text} language={box.language} wrap="truncate-end" />
+          <Code source={tab.text} language={tab.language} wrap="truncate-end" />
         </Box>
         {copy}
       </Box>
     )
   }
   return (
-    <Box key={key} flexDirection="column" borderStyle="round" borderColor={tone.color} paddingX={1}>
-      <Box flexDirection="row" justifyContent="space-between" alignItems="center">
-        {title}
+    <Box key={key} flexDirection="column" borderStyle="round" borderColor={color} paddingX={1}>
+      <Box flexDirection="row" justifyContent="space-between" alignItems="center" columnGap={2}>
+        <Box flexDirection="row" alignItems="center" columnGap={2}>
+          {title}
+          {tabs}
+        </Box>
         {copy}
       </Box>
-      <Code source={box.text} language={box.language} />
+      <Code source={tab.text} language={tab.language} />
+    </Box>
+  )
+}
+
+// A choice: the question, then one row per option with its tradeoff. A pick
+// marks the option and sends just its label as the person's message.
+async function drawChoice($: any, els: Els, key: string, choice: ChoiceInput) {
+  const { Box, Text, Button } = els
+  const picked: number | undefined = (await read($, choices))[key]
+  const color = picked === undefined ? '#a78bfa' : '#22c55e'
+  return (
+    <Box key={key} flexDirection="column" borderStyle="round" borderColor={color} paddingX={1} paddingY="xs" rowGap="xs">
+      <Text color={color} bold>
+        {choice.question}
+      </Text>
+      {choice.options.map((option, n) => (
+        <Box key={`${key}-opt-${n}`} flexDirection="row" alignItems="center" columnGap={2}>
+          <Button
+            key={`${key}-pick-${n}`}
+            label={picked === n ? `✓ ${option.label}` : option.label}
+            variant={picked === n ? 'primary' : undefined}
+            dimColor={picked !== undefined && picked !== n}
+            onPress={async () => {
+              if (picked !== undefined) return
+              await update($, choices, (all: Record<string, number>) => ({ ...all, [key]: n }))
+              await $.prompt.submit({ text: option.label, asUser: true })
+            }}
+          />
+          {option.detail && (
+            <Box flexShrink={1}>
+              <Text dimColor>{option.detail}</Text>
+            </Box>
+          )}
+        </Box>
+      ))}
     </Box>
   )
 }
 
 // The desktop draws native buttons and ignores a label's text color, so the
-// pressed one gets a thin outline in its color that hugs the button. Labels
-// never change and unpressed slots keep a clear outline, so nothing shifts.
+// step pills are drawn by the surface: a rounded Svg with an invisible Client
+// over it for the click (flat Client pills elsewhere, plain buttons last).
 const BUTTONS: { status: StepStatus; label: string; color: string }[] = [
   { status: 'done', label: 'Done', color: '#22c55e' },
   { status: 'failed', label: 'Failed', color: '#ef4444' },
@@ -280,11 +372,6 @@ async function flushDrafts($: any) {
   await saveLists($)
 }
 
-// A checklist: a header with progress, then one row per step with its status
-// and three buttons, the pressed one in its own color. Pressing the status a
-// step already has sets it back to todo. A failed step opens a line for why.
-// The desktop's rounded pill: an Svg of a rounded rectangle with the label,
-// the same size as the flat one-row pill (label plus a cell either side).
 const CELL_PX = 8
 const ROW_PX = 18
 const OFF_BG = '#3a3a3f'
@@ -328,15 +415,14 @@ async function drawChecklist($: any, els: Els & { Input: any; Client?: any; Svg?
   const settled = status.filter(s => s !== 'todo').length
   const color = failed > 0 ? '#f59e0b' : done === input.steps.length ? '#22c55e' : '#3b82f6'
 
-  const edit = (fn: (list: Checklist) => Checklist) =>
-    update($, checklists, (lists: Record<string, Checklist>) => ({ ...lists, [key]: fn(lists[key] ?? emptyList(input)) }))
   const setStep = (i: number, next: StepStatus) => setStepOf($, key, i, next, input)
   const saveNote = async (i: number, text: string) => {
     drafts.delete(draftKey(key, i))
-    await edit(list => {
-      const notes = [...list.notes]
+    await update($, checklists, (lists: Record<string, Checklist>) => {
+      const one = lists[key] ?? emptyList(input)
+      const notes = [...one.notes]
       notes[i] = text
-      return { ...list, notes }
+      return { ...lists, [key]: { ...one, notes } }
     })
     await saveLists($)
     $.ui.toast('Reason saved')
@@ -368,7 +454,6 @@ async function drawChecklist($: any, els: Els & { Input: any; Client?: any; Svg?
                 {BUTTONS.map(b => {
                   const isOn = now === b.status
                   const isDim = !isOn && now !== 'todo'
-                  // The desktop: a rounded Svg pill with an invisible Client over it for the click.
                   if (Client && Svg) {
                     const pill = pillSvg(b.label, isOn ? b.color : OFF_BG, isOn, isDim)
                     return (
@@ -385,7 +470,6 @@ async function drawChecklist($: any, els: Els & { Input: any; Client?: any; Svg?
                       </Box>
                     )
                   }
-                  // Colored flat pills where the surface runs Client modules; plain buttons elsewhere.
                   return Client ? (
                     <Client
                       key={pillKey(key, i, b.status)}
@@ -426,6 +510,19 @@ async function drawChecklist($: any, els: Els & { Input: any; Client?: any; Svg?
   )
 }
 
+async function drawBlock($: any, els: any, tool: string, key: string, input: unknown) {
+  if (tool === COPY_TOOL) {
+    const box = readCopyBox(input)
+    return box ? drawCopyBox($, els, key, box) : undefined
+  }
+  if (tool === CHECK_TOOL) {
+    const list = readChecklist(input)
+    return list ? drawChecklist($, els, key, list) : undefined
+  }
+  const choice = readChoice(input)
+  return choice ? drawChoice($, els, key, choice) : undefined
+}
+
 export const register: Register = (on, options) => {
   const responseStyle = typeof options.responseStyle === 'string' ? options.responseStyle : 'concise'
 
@@ -442,64 +539,107 @@ export const register: Register = (on, options) => {
 
   on('session.start', async ($, e, next) => {
     await loadLists($)
+    // Descriptions stay minimal: they are sent with every request. When to use
+    // each block is in the guide section, once.
     await $.tool.register({
       name: 'copy_box',
-      description:
-        'Show the user text they need to copy and paste (a command, config, snippet, message) ' +
-        'in a color-coded box with a Copy button, drawn in the chat. Use this instead of a ' +
-        'plain code block whenever the user has to copy something. tone: info (default), ' +
-        'warning, success or danger.',
+      description: 'Show text for the user to copy, in a box with a Copy button.',
       inputSchema: {
         type: 'object',
         properties: {
-          text: { type: 'string', description: 'The exact text to copy.' },
-          title: { type: 'string', description: 'Short label, e.g. "Run in PowerShell".' },
-          language: { type: 'string', description: 'Highlighter language, e.g. powershell, bash, json.' },
+          text: { type: 'string' },
+          title: { type: 'string' },
+          language: { type: 'string' },
           tone: { type: 'string', enum: ['info', 'warning', 'success', 'danger'] },
+          tabs: {
+            type: 'array',
+            description: 'Instead of text: one tab per OS or shell.',
+            items: {
+              type: 'object',
+              properties: { label: { type: 'string' }, text: { type: 'string' }, language: { type: 'string' } },
+              required: ['label', 'text'],
+            },
+          },
         },
-        required: ['text'],
       },
       isDeferred: false,
     })
     await $.tool.register({
       name: 'checklist',
-      description:
-        'Show the user an interactive checklist in the chat for steps THEY must do themselves ' +
-        '(install something, click through a UI, change a setting). Each step gets Done / Failed / ' +
-        'Skip buttons. Use this instead of a numbered list of manual steps. Keep each step one short ' +
-        'sentence. The user\'s progress is sent back to you with their next message.',
+      description: 'Show steps the user must do themselves, each with Done/Failed/Skip.',
       inputSchema: {
         type: 'object',
-        properties: {
-          title: { type: 'string', description: 'Short name for the task, e.g. "Install the Claude CLI".' },
-          steps: { type: 'array', items: { type: 'string' }, description: 'The steps, in order.' },
-        },
+        properties: { title: { type: 'string' }, steps: { type: 'array', items: { type: 'string' } } },
         required: ['steps'],
       },
       isDeferred: false,
     })
+    await $.tool.register({
+      name: 'choice',
+      description: 'Ask the user to pick one of 2-4 options.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          question: { type: 'string' },
+          options: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: { label: { type: 'string' }, detail: { type: 'string', description: 'One-line tradeoff.' } },
+              required: ['label'],
+            },
+          },
+        },
+        required: ['question', 'options'],
+      },
+      isDeferred: false,
+    })
+    await $.command.register({ name: 'highlights', description: "Show the colored lines from Claude's replies in a pane" })
+    await $.command.register({ name: 'checklists', description: 'Show every checklist and its progress in a pane' })
     return next(e)
   })
 
-  on('tool.call', { tool: COPY_TOOL }, async () => ({
-    result: 'Shown to the user in a copy box with a Copy button.',
-  }))
+  // Tool results are a few words: they stay in the context for the rest of the conversation.
+  on('tool.call', { tool: COPY_TOOL }, async ($, e) =>
+    readCopyBox(e) ? { result: 'Shown.' } : { deny: 'copy_box needs text or tabs.' },
+  )
 
   on('tool.call', { tool: CHECK_TOOL }, async ($, e) => {
     const input = readChecklist(e)
-    if (input === undefined) return { deny: 'checklist needs a non-empty "steps" array of strings.' }
+    if (input === undefined) return { deny: 'checklist needs steps.' }
     const list: Checklist = { ...emptyList(input), session: await $.session.id() }
     list.reported = summary(list)
     await update($, checklists, (lists: Record<string, Checklist>) => ({ ...lists, [e.tool_use_id]: list }))
     await saveLists($)
-    return {
-      result:
-        `Shown to the user as an interactive checklist (${input.steps.length} steps, all todo). ` +
-        'Their progress arrives with their next message.',
-    }
+    return { result: 'Shown. Progress comes with the next message.' }
   })
 
-  // A click on a colored pill: its key says which checklist, step and status.
+  on('tool.call', { tool: CHOICE_TOOL }, async ($, e) =>
+    readChoice(e) ? { result: 'Shown. The pick comes as the next message.' } : { deny: 'choice needs 2+ options.' },
+  )
+
+  on('command.run', { command: 'highlights' }, async $ => {
+    await collectHighlights($)
+    await $.ui.open({ id: HIGHLIGHTS_PANE, title: 'Highlights' })
+    return { text: 'Opened.' }
+  })
+
+  on('command.run', { command: 'checklists' }, async $ => {
+    await $.ui.open({ id: CHECKLISTS_PANE, title: 'Checklists' })
+    return { text: 'Opened.' }
+  })
+
+  on('ui.render', { component: 'Pane', requestId: HIGHLIGHTS_PANE }, async ($, e) => drawHighlights($, e))
+  on('ui.render', { component: 'Pane', requestId: CHECKLISTS_PANE }, async ($, e) => drawChecklists($, e))
+
+  // Keep the highlights current: re-read the callouts when a main turn ends.
+  on('turn.complete', async ($, e, next) => {
+    const result = await next(e)
+    if ((e as { agentId?: string }).agentId === undefined) await collectHighlights($)
+    return result
+  })
+
+  // A click on a colored pill or the suggestion header.
   on('ui.message', async ($, e, next) => {
     if (e.element === 'suggest-header') {
       const action = (e.data as { action?: unknown } | null)?.action
@@ -519,7 +659,7 @@ export const register: Register = (on, options) => {
   })
 
   // Compaction: tell the summarizer to keep the completed steps and drop what
-  // is spent, then add the completed steps back as one short row after it.
+  // is spent, then add the completed steps back inside the compacted list.
   on('session.compact', async ($, e, next) => {
     if (e.trigger === 'precompute' || e.agentId !== undefined) return next(e)
     await flushDrafts($)
@@ -529,8 +669,8 @@ export const register: Register = (on, options) => {
     if (result.messages === undefined) return result
     await settleChecklists($)
     if (done === '') return result
-    // The note rides in the compacted conversation itself: a row appended while
-    // the compaction runs is wiped when the compacted list is installed.
+    // A row appended while the compaction runs is wiped when the compacted
+    // list is installed, so the note rides inside it.
     return { ...result, messages: [...result.messages, { role: 'user' as const, text: KEEP_NOTE(done), toolUses: [] }] }
   })
 
@@ -546,7 +686,9 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  // With each message the person sends, tell Claude about checklists that changed.
+  // With each message the person sends, tell Claude about checklists that
+  // changed: one compact line each. A message that is itself the suggested
+  // reply already says it all, so then nothing is added.
   on('prompt.submit', async ($, e, next) => {
     if (e.command !== undefined) return next(e)
     const carried = (await $.store.get('carry')) as { text?: string; at?: number } | undefined
@@ -559,8 +701,8 @@ export const register: Register = (on, options) => {
     }
     await flushDrafts($) // a reason typed but not saved still counts
     const lists = await read($, checklists)
-    // Whatever the person sends, the current suggestion has been dealt with.
-    await update($, suggestSeen, () => suggestion(lists))
+    const suggested = suggestion(lists)
+    await update($, suggestSeen, () => suggested)
     await update($, suggestOpen, () => false)
     const changed = Object.entries(lists).filter(([, list]) => summary(list) !== list.reported)
     if (changed.length === 0) return next(e)
@@ -569,29 +711,23 @@ export const register: Register = (on, options) => {
       for (const [id] of changed) if (copy[id]) copy[id] = { ...copy[id], reported: summary(copy[id]) }
       return copy
     })
-    const note =
-      'Checklist progress the user marked (rich-blocks):\n\n' + changed.map(([, list]) => summary(list)).join('\n\n')
+    if (suggested !== '' && e.text.trim() === suggested.trim()) return next(e)
+    const note = 'Checklist progress (rich-blocks):\n' + changed.map(([, list]) => summary(list)).join('\n')
     return next({ ...e, context: [...(e.context ?? []), note] })
   })
 
   on('ui.render', { component: 'ToolGroup' }, async ($, e, next) => {
     const calls = e.props.calls
       .map((call, i) => ({ call, key: call.tool_use_id ?? `call-${i}` }))
-      .filter(({ call }) => (call.tool === COPY_TOOL || call.tool === CHECK_TOOL) && !call.isErrored && !call.isInterrupted)
+      .filter(({ call }) => OUR_TOOLS.has(call.tool) && !call.isErrored && !call.isInterrupted)
     if (calls.length === 0) return next(e)
     const els = $.ui.resolve(e)
     const group = await next(e)
     const blocks = []
     for (const { call, key } of calls) {
-      if (call.tool === COPY_TOOL) {
-        const box = readCopyBox(call.input)
-        if (box) blocks.push(drawCopyBox($, els, key, box))
-      } else {
-        const list = readChecklist(call.input)
-        if (list) blocks.push(await drawChecklist($, els, key, list))
-      }
+      const block = await drawBlock($, els, call.tool, key, call.input)
+      if (block) blocks.push(block)
     }
-
     return (
       <els.Box flexDirection="column" gap="xs">
         {group}
@@ -599,6 +735,13 @@ export const register: Register = (on, options) => {
       </els.Box>
     )
   })
+
+  for (const tool of OUR_TOOLS) {
+    on('ui.render', { component: 'ToolUse', props: { tool } }, async ($, e, next) => {
+      if (e.props.isErrored) return next(e)
+      return (await drawBlock($, $.ui.resolve(e), tool, e.props.tool_use_id, e.props.input)) ?? next(e)
+    })
+  }
 
   // Above the prompt: a one-line suggestion that opens to show a message built
   // from the checklists, ready to put in the prompt box. It stacks on top of
@@ -613,7 +756,6 @@ export const register: Register = (on, options) => {
     const Client = 'Client' in els ? els.Client : undefined
     const dismiss = () => update($, suggestSeen, () => text)
     const below = await next(e)
-    // Its own block with room below, so it never runs into the next band (Clawd's).
     const stack = (mine: unknown) => (
       <Box flexDirection="column">
         <Box flexDirection="column" marginBottom="sm" paddingTop="xs">
@@ -623,8 +765,6 @@ export const register: Register = (on, options) => {
       </Box>
     )
 
-    // Clawd's look: plain colored text runs on one line (the desktop draws a
-    // Button's label in its own colors, so the header is Text, not a Button).
     const list = latestTouched(await read($, checklists))
     const steps = list?.steps.length ?? 0
     const count = (want: StepStatus) => list?.status.filter(s => s === want).length ?? 0
@@ -657,8 +797,6 @@ export const register: Register = (on, options) => {
 
     if (!isOpen) return stack(header)
 
-    // Opened: every row drawn whole, colored by outcome, so a long suggestion
-    // reads top to bottom with nothing to scroll.
     const rows = suggestionRows(await read($, checklists))
     return stack(
       <Box flexDirection="column" rowGap="xs">
@@ -679,7 +817,6 @@ export const register: Register = (on, options) => {
             onPress={async press => {
               const filled = await $.prompt.fill({ text, mode: 'replace' })
               if (!filled.isFilled) {
-                // The desktop may draw its own prompt box that a mod cannot fill.
                 const copied = await $.ui.copy({ text, surface: press.surface })
                 $.ui.toast(copied.isCopied ? 'Copied: paste it into the prompt box' : 'Could not fill or copy the suggestion')
               }
@@ -693,22 +830,9 @@ export const register: Register = (on, options) => {
     )
   })
 
-  // Colored callouts in Claude's own replies: [[imp: ...]], [[warn: ...]],
-  // [[ok: ...]], [[tip: ...]]. Replies without a marker are left alone.
+  // Colored callouts in Claude's own replies. Replies without a marker are left alone.
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
     if (e.props.isSummary || !hasCallouts(e.props.text)) return next(e)
     return drawCallouts($.ui.resolve(e), e.props.text)
-  })
-
-  on('ui.render', { component: 'ToolUse', props: { tool: COPY_TOOL } }, async ($, e, next) => {
-    const box = readCopyBox(e.props.input)
-    if (box === undefined || e.props.isErrored) return next(e)
-    return drawCopyBox($, $.ui.resolve(e), e.props.tool_use_id, box)
-  })
-
-  on('ui.render', { component: 'ToolUse', props: { tool: CHECK_TOOL } }, async ($, e, next) => {
-    const list = readChecklist(e.props.input)
-    if (list === undefined || e.props.isErrored) return next(e)
-    return drawChecklist($, $.ui.resolve(e), e.props.tool_use_id, list)
   })
 }
