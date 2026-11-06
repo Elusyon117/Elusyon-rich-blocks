@@ -704,7 +704,10 @@ export const register: Register = (on, options) => {
     const suggested = suggestion(lists)
     await update($, suggestSeen, () => suggested)
     await update($, suggestOpen, () => false)
-    const changed = Object.entries(lists).filter(([, list]) => summary(list) !== list.reported)
+    // Only this conversation's checklists: saved ones from other sessions are
+    // shown in their own transcripts, never reported here.
+    const session = await $.session.id()
+    const changed = Object.entries(lists).filter(([, list]) => list.session === session && summary(list) !== list.reported)
     if (changed.length === 0) return next(e)
     await update($, checklists, (all: Record<string, Checklist>) => {
       const copy = { ...all }

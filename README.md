@@ -16,6 +16,12 @@ A Claude Code mod that makes Claude's answers easier to act on.
 - **Concise style:** short, on-topic answers that end with next steps when work continues. Switch it off in the config settings (Response style: `off`).
 - **Compaction:** when a conversation compacts (or is handed off with `/clear`), the steps you marked Done are kept and the rest is dropped.
 
+### Choices, tabbed copy boxes and callouts
+
+A choice (the pick is sent as your reply), a copy box with PowerShell and bash tabs, a checklist, and two colored callouts:
+
+![A choice with Option A picked, a copy box on its bash tab, a three-step checklist, and orange and blue callouts](docs/blocks-0.6.png)
+
 ### Suggested reply
 
 Collapsed to one line above the prompt until you click **show**:
