@@ -30,6 +30,8 @@ declare module 'claude-code' {
       copyTabs: Record<string, number>
       /** The option picked in each choice block, by tool_use_id. */
       choices: Record<string, number>
+      /** Open/closed toggles in the panes: highlight groups and checklist cards. */
+      paneToggles: Record<string, boolean>
     }
   }
 }
