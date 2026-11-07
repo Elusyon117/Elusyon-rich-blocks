@@ -12,6 +12,7 @@
   <a href="#features">Features</a> ·
   <a href="#configuration">Configuration</a> ·
   <a href="#token-use">Token use</a> ·
+  <a href="#license">License</a> ·
   <a href="#changelog">Changelog</a>
 </p>
 
@@ -131,8 +132,13 @@ claude plugin validate .
 claude plugin test .
 ```
 
+## License
+
+[MIT](LICENSE): free to use, modify and share, including in your own mods. Keep the copyright notice with copies.
+
 ## Changelog
 
+- **1.0.1** MIT license.
 - **1.0.0** First stable release: copy boxes with OS/shell tabs, checklists with reasons, choices, colored callouts, the suggested reply, `/highlights` and `/checklists` panes, a concise response style, compact token use, and completed steps kept through compaction and `/clear` handoffs.
 
 ---

@@ -1,9 +1,10 @@
 {
   "name": "rich-blocks",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Interactive blocks in the chat: copy boxes, checklists you tick off, colored callouts in replies, a concise response style, and completed steps kept through compaction.",
   "author": { "name": "Elusyon117", "url": "https://github.com/Elusyon117" },
   "repository": "https://github.com/Elusyon117/Elusyon-rich-blocks",
+  "license": "MIT",
   "types": "./types/index.d.ts",
   "userConfig": {
     "responseStyle": {
