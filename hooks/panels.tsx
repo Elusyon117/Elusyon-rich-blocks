@@ -51,17 +51,18 @@ export async function drawHighlights($: any, e: any) {
   return (
     <Box flexDirection="column" rowGap="sm">
       {KINDS.map(({ kind, label }) => {
-        const rows = list.map((h, i) => ({ h, i })).filter(({ h }) => h.kind === kind)
+        // Never name a variable `h`: JSX compiles to calls of the global `h`.
+        const rows = list.map((item, i) => ({ item, i })).filter(({ item }) => item.kind === kind)
         if (rows.length === 0) return null
         return (
           <Box key={`hl-${kind}`} flexDirection="column">
             <Text bold color={CALLOUT_COLOR[kind]}>
               {label} <Text dimColor>{rows.length}</Text>
             </Text>
-            {rows.reverse().map(({ h, i }) => (
+            {rows.reverse().map(({ item, i }) => (
               <Box key={`hl-${kind}-${i}`} flexDirection="row" alignItems="center" columnGap={1}>
                 <Box flexGrow={1} flexShrink={1}>
-                  <Text color={CALLOUT_COLOR[kind]}>{h.text}</Text>
+                  <Text color={CALLOUT_COLOR[kind]}>{item.text}</Text>
                 </Box>
                 <Button
                   key={`hl-copy-${i}`}
@@ -69,7 +70,7 @@ export async function drawHighlights($: any, e: any) {
                   dimColor
                   label="copy"
                   onPress={async (press: any) => {
-                    const copied = await $.ui.copy({ text: h.text, surface: press.surface })
+                    const copied = await $.ui.copy({ text: item.text, surface: press.surface })
                     $.ui.toast(copied.isCopied ? 'Copied ✓' : 'Could not copy')
                   }}
                 />

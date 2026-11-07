@@ -22,6 +22,12 @@ A choice (the pick is sent as your reply), a copy box with PowerShell and bash t
 
 ![A choice with Option A picked, a copy box on its bash tab, a three-step checklist, and orange and blue callouts](docs/blocks-0.6.png)
 
+### `/checklists`
+
+Every checklist with its progress; ones from earlier conversations are marked:
+
+<img src="docs/checklists-pane.png" alt="The checklists pane listing checklists with colored progress marks" width="380">
+
 ### Suggested reply
 
 Collapsed to one line above the prompt until you click **show**:
