@@ -70,3 +70,16 @@ claude plugin install rich-blocks --marketplace Elusyon117/Elusyon-rich-blocks
 In the desktop app, where `/plugin` does not run: click **+** next to the prompt box, then **Plugins**, **Add marketplace** with `Elusyon117/Elusyon-rich-blocks`, then **Add plugin**.
 
 The usage instructions reach Claude in conversations started after install.
+
+## Update
+
+Desktop: **Plugins** → rich-blocks → update. Shell:
+
+```
+claude plugin marketplace update elusyon-rich-blocks
+claude plugin update rich-blocks@elusyon-rich-blocks
+```
+
+## Changelog
+
+- **1.0.0** First stable release. Copy boxes (with OS/shell tabs), checklists with Done/Failed/Skip and reasons, choice blocks, colored callouts, the suggested reply above the prompt, `/highlights` and `/checklists` panes, a concise response style (switchable in config), compact token use, and completed steps kept through compaction and `/clear` handoffs.
