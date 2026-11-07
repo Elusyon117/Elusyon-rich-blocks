@@ -84,15 +84,17 @@ export async function drawHighlights($: any, e: any) {
         const isAll = toggles[`hl-all:${g.kind}`] ?? false
         const shown = isAll ? g.items : g.items.slice(0, PREVIEW)
         return (
-          <Box key={`hl-card-${g.kind}`} flexDirection="column" borderStyle="round" borderColor={CARD_BORDER} paddingX={1} paddingY="xs" rowGap="xs">
+          // The title is plain Text (a Button's label takes the surface's own
+          // colors), and an expanded card's border takes the group's color.
+          <Box key={`hl-card-${g.kind}`} flexDirection="column" borderStyle="round" borderColor={isOpen ? color : CARD_BORDER} paddingX={1} paddingY="xs" rowGap="xs">
             <Box flexDirection="row" alignItems="center" justifyContent="space-between">
-              <Button key={`hl-head-${g.kind}`} plain onPress={() => toggle($, `hl:${g.kind}`, true)}>
+              <Text>
                 <Text color={color} bold>
                   {g.icon} {g.label}
-                </Text>{' '}
-                <Text color={MUTED}>{g.items.length}</Text>
-              </Button>
-              <Button key={`hl-fold-${g.kind}`} plain dimColor label={isOpen ? '▾' : '▸'} onPress={() => toggle($, `hl:${g.kind}`, true)} />
+                </Text>
+                <Text color={MUTED}> {g.items.length}</Text>
+              </Text>
+              <Button key={`hl-fold-${g.kind}`} plain dimColor label={isOpen ? '▾ hide' : '▸ show'} onPress={() => toggle($, `hl:${g.kind}`, true)} />
             </Box>
             {isOpen &&
               shown.map(({ item, i }) => (

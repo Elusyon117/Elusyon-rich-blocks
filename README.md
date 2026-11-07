@@ -22,11 +22,14 @@ A choice (the pick is sent as your reply), a copy box with PowerShell and bash t
 
 ![A choice with Option A picked, a copy box on its bash tab, a three-step checklist, and orange and blue callouts](docs/blocks-0.6.png)
 
-### `/checklists`
+### `/highlights` and `/checklists`
 
-Every checklist with its progress; ones from earlier conversations are marked:
+Side panes that never touch Claude's context. Highlights groups every colored line into cards, newest first, each copyable. Checklists shows each one as a card with a segmented progress bar; expand it to see every step and your reasons.
 
-<img src="docs/checklists-pane.png" alt="The checklists pane listing checklists with colored progress marks" width="380">
+<p>
+  <img src="docs/highlights-pane.png" alt="The highlights pane: cards for important lines, warnings, Claude's next steps and done items" width="400">
+  <img src="docs/checklists-pane.png" alt="The checklists pane: cards with colored progress bars, one expanded to show its steps" width="400">
+</p>
 
 ### Suggested reply
 
